@@ -181,6 +181,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.command == "book":
         assert ctx is not None
         booking = service.suggest_bookings(ctx)
+
+        # Display safety warning if present
+        if booking.get("safety_warning"):
+            print(f"{TOOL_COLOR}{booking['safety_warning']}{RESET_COLOR}")
+            print()  # Add spacing after warning
+
         print(f"{ASSISTANT_COLOR}Suggested flights:{RESET_COLOR}")
         for flight in booking["flights"]:
             print(
@@ -191,6 +197,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(
                 f"{ASSISTANT_COLOR}- {hotel['summary']} ({hotel['price']} {hotel['currency']}){RESET_COLOR}"
             )
+
+        # For dangerous destinations, add extra confirmation
+        if booking.get("safety_warning"):
+            print(f"{TOOL_COLOR}⚠️  WARNING: This destination has safety concerns. Proceed with extreme caution.{RESET_COLOR}")
+
         confirmation = input(
             f"{ASSISTANT_COLOR}Hold ID {booking['hold_id']} ready. Confirm booking? (yes/no): {RESET_COLOR}"
         ).strip().lower()

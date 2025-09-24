@@ -16,8 +16,9 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from .safety_tools import create_safety_tool
 
-PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "prompts", "system_prompt.txt")
+PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "prompts", "comprehensive_system_prompt.txt")
 with open(PROMPT_PATH, "r", encoding="utf-8") as prompt_file:
     SYSTEM_PROMPT = prompt_file.read()
 
