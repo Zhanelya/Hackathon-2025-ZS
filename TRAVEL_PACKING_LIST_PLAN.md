@@ -44,7 +44,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 - **Token efficiency**: cap max tokens per response, summarize chat history aggressively, truncate irrelevant memory, and limit tool-call fan-out. Prefer structured terse outputs in keep-it-simple mode. Refuse off-topic tasks to avoid token waste.
 - **Scope/guardrails**: the assistant is strictly for travel planning/packing. Politely refuse unrelated domains; avoid medical/legal advice beyond linking to official sources; disallow dangerous or disallowed items; rate-limit excessively long prompts and enforce message length caps.
 - **Offline-first (Phase 1)**: default to strict offline/mock mode with zero external HTTP. Any attempt to call live endpoints should raise a clear error.
-- **LLM integration**: DeepseekTravels defaults to the LangChain Azure OpenAI agent whenever required env vars are set; falls back to deterministic mock engine otherwise. System prompt resides in `src/agent/prompts/system_prompt.txt` and includes interactive onboarding instructions.
+- **LLM integration**: DeepseekTravels defaults to the LangChain Azure OpenAI agent whenever required env vars are set; falls back to deterministic mock engine otherwise. System prompt resides in `src/agent/prompts/system_prompt.txt` and includes interactive onboarding instructions. MCP endpoints for weather, attractions, and travel requirements are configurable via environment variables.
 
 ## Architecture Overview (patterned after `src/agent/attractions.ipynb`)
 Replicate the notebook structure with analogous cells:
@@ -68,7 +68,7 @@ Reuse existing:
 - `attractions-mcp`: optional for itinerary-driven packing
 
 Add new MCPs:
-**Phase 1 HTTP policy:** All external HTTP calls MUST be mocked. MCP servers run in stub/offline mode with deterministic fixtures; no outbound network calls are permitted in Phase 1.
+- **Phase 1 HTTP policy**: Maintain deterministic behavior by standing up mock MCP servers for weather, requirements, and booking. Only budgeting still relies on in-process fixtures; a future `budgeting-mcp` will complete MCP coverage.
 1) `travel-requirements-mcp` (HTTP)
    - **Purpose**: Validate airport security restrictions, baggage rules, visas, documents.
    - Tools:
@@ -76,6 +76,7 @@ Add new MCPs:
      - `check_baggage_allowance(airline, cabin_class, route, fare_brand)` → size, linear dimensions, weight limits, personal item policy, references.
      - `get_visa_requirements(nationality, destination_country, transit_countries, stay_length_days, purpose)` → visas/ESTA/eTA, passport validity, entry docs, references.
      - `get_documents_checklist(destination_country, nationality, minors_traveling, driving, insurance)` → documents and recommended paperwork.
+   - **Status**: Implemented in `src/mcp/requirements-mcp` with mock fixtures identical to the in-app mock client. Connected through `MultiServerMCPClient` for both CLI fallback and LangChain agent paths.
 
 2) `booking-mcp` (HTTP)
    - **Purpose**: Search and propose bookings; perform booking only with explicit confirmation.
@@ -85,6 +86,7 @@ Add new MCPs:
      - `search_activities(destination, dates, interests, budget)`
      - `hold_booking(booking_type, booking_payload)` → returns hold ID and expiration; requires confirmation step.
      - `confirm_booking(hold_id, payment_token_or_redirect)` → only after user says “confirm”.
+   - **Status**: Implemented in `src/mcp/booking-mcp` and accessed via MCP throughout the application.
 
 Data contracts (illustrative JSON schemas):
 

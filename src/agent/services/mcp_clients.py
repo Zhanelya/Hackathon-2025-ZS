@@ -1,88 +1,49 @@
-"""Mock MCP clients used in Phase 1 of DeepseekTravels."""
+"""MCP client builders for DeepseekTravels."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Any, Dict
 
-from .mock_fixtures import (
-    BOOKING_FIXTURES,
-    BUDGET_FIXTURES,
-    SECURITY_FIXTURES,
-    VISA_FIXTURES,
-    WEATHER_FIXTURES,
-)
-
-
-@dataclass
-class WeatherClient:
-    """Returns canned weather data keyed by destination."""
-
-    fixtures: Dict[str, Dict[str, Any]]
-
-    def get_current(self, location: str) -> Dict[str, Any]:
-        key = location.lower()
-        return self.fixtures.get(key, self.fixtures["default"])
-
-
-@dataclass
-class RequirementsClient:
-    """Provides security and visa guidance from fixtures."""
-
-    security_fixtures: Dict[str, Dict[str, Any]]
-    visa_fixtures: Dict[str, Dict[str, Any]]
-
-    def get_security_rules(self, airport_code: str | None = None) -> Dict[str, Any]:
-        return self.security_fixtures.get("default", {})
-
-    def get_visa_requirements(
-        self, nationality: str, destination_country: str
-    ) -> Dict[str, Any]:
-        key = f"{nationality.lower()}-{destination_country.lower()}"
-        return self.visa_fixtures.get(key, self.visa_fixtures["default"])
-
-
-@dataclass
-class BookingClient:
-    """Returns mocked booking data (flights, hotels)."""
-
-    fixtures: Dict[str, Dict[str, Any]]
-
-    def search_flights(self, destination: str) -> Dict[str, Any]:
-        return self.fixtures.get(destination.lower(), self.fixtures["default"])
-
-    def search_hotels(self, destination: str) -> Dict[str, Any]:
-        return self.fixtures.get(destination.lower(), self.fixtures["default"])
-
-
-@dataclass
-class BudgetingClient:
-    fixtures: Dict[str, Dict[str, Any]]
-
-    def get_defaults(self) -> Dict[str, Any]:
-        return self.fixtures.get("default", {})
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 def build_mock_clients() -> dict[str, Any]:
-    """Factory that honors Phase 1 offline requirements."""
+    """Return MCP tool clients backed by the local mock MCP servers."""
 
+    base_config = {}
+
+    attractions_url = os.getenv("ATTRACTIONS_MCP_URL")
+    if attractions_url:
+        base_config["attractions"] = {
+            "transport": "streamable_http",
+            "url": attractions_url,
+        }
+
+    base_config["weather"] = {
+        "transport": "streamable_http",
+        "url": os.getenv("WEATHER_MCP_URL", "http://localhost:8009"),
+    }
+    base_config["requirements"] = {
+        "transport": "streamable_http",
+        "url": os.getenv("REQUIREMENTS_MCP_URL", "http://localhost:8010"),
+    }
+    base_config["booking"] = {
+        "transport": "streamable_http",
+        "url": os.getenv("BOOKING_MCP_URL", "http://localhost:8011"),
+    }
+
+    # Phase 1 still enforces mock mode, but the clients themselves connect over MCP.
     if os.getenv("DEEPSEEKTRAVELS_USE_MOCKS", "true").lower() != "true":
         raise RuntimeError("Phase 1 requires mock mode enabled.")
 
+    # Existing deterministic budgeting helper remains in-process until a dedicated MCP is built.
+    mcp_client = MultiServerMCPClient(base_config)
+
     return {
-        "weather": WeatherClient(WEATHER_FIXTURES),
-        "requirements": RequirementsClient(SECURITY_FIXTURES, VISA_FIXTURES),
-        "booking": BookingClient(BOOKING_FIXTURES),
-        "budgeting": BudgetingClient(BUDGET_FIXTURES),
+        "mcp_client": mcp_client,
     }
 
 
-__all__ = [
-    "WeatherClient",
-    "RequirementsClient",
-    "BookingClient",
-    "BudgetingClient",
-    "build_mock_clients",
-]
+__all__ = ["build_mock_clients"]
 

@@ -69,6 +69,8 @@ class PackingContext:
     carrying_infants: Optional[int] = None
     traveling_adults: Optional[int] = None
     traveling_pets: Optional[int] = None
+    airline: Optional[str] = None
+    transportation_cabin_class: Optional[str] = None
 
 
 __all__ = [

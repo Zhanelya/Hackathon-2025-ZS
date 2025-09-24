@@ -65,10 +65,19 @@ BOOKING_FIXTURES = {
                 "summary": "Cozy mock hotel near Louvre",
             }
         ],
+        "activities": [
+            {
+                "id": "AC-41",
+                "title": "Guided Louvre tour",
+                "price": 60.0,
+                "currency": "EUR",
+            }
+        ],
     },
     "default": {
         "flights": [],
         "hotels": [],
+        "activities": [],
     },
 }
 

@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import inspect
+import json
 import os
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Awaitable
 
 from ..models.packing_models import PackingContext
 from ..packing.engine import DeepseekTravelsEngine
-from .langchain_agent import build_langchain_agent
+from .langchain_agent import build_langchain_agent, _run_async
 from .mcp_clients import build_mock_clients
+
+
+class _FixtureTool:
+    def __init__(self, name: str, handler):
+        self.name = name
+        self._handler = handler
+
+    def invoke(self, params):
+        return self._handler(params)
 
 
 def _should_use_llm() -> bool:
@@ -36,6 +47,7 @@ class PackingAssistantService:
     agent_executor: Optional[Any] = None
     mcp_agent_client: Optional[Any] = None
     llm_enabled: bool = False
+    _tool_cache: Dict[tuple[str, str], Any] = field(default_factory=dict)
 
     @classmethod
     def create(cls) -> "PackingAssistantService":
@@ -43,7 +55,7 @@ class PackingAssistantService:
         engine = DeepseekTravelsEngine()
         use_llm = _should_use_llm()
         agent_executor: Optional[Any] = None
-        mcp_client: Optional[Any] = None
+        mcp_client: Optional[Any] = clients.get("mcp_client")
         if use_llm:
             try:
                 agent_executor, mcp_client = build_langchain_agent()
@@ -85,7 +97,7 @@ class PackingAssistantService:
     ) -> str:
         if self.llm_enabled and self.agent_executor is not None:
             payload = {"input": message}
-            result = self.agent_executor.invoke(payload, callbacks=callbacks)
+            result = _run_async(self.agent_executor.ainvoke(payload, callbacks=callbacks))
             return result.get("output") or result.get("final_output") or ""
 
         # Fallback heuristic response using rule-based engine (should rarely be used)
@@ -96,8 +108,8 @@ class PackingAssistantService:
             activities=["general"],
             time_of_day_usage=["day"],
         )
-        weather = self.clients["weather"].get_current(minimal_context.destination)
-        requirements = self._gather_requirements(minimal_context)
+        weather = self._weather_tool(minimal_context.destination, callbacks=callbacks)
+        requirements = self._gather_requirements(minimal_context, callbacks=callbacks)
         result = self.engine.generate(minimal_context, weather)
         summary = ", ".join(f"{item.name} x{item.quantity}" for item in result.items[:5])
         reply = (
@@ -112,7 +124,7 @@ class PackingAssistantService:
     # Deterministic utilities used by non-chat commands
     # ------------------------------------------------------------------
     def generate_packing_list(self, context: PackingContext) -> dict[str, Any]:
-        weather = self.clients["weather"].get_current(context.destination)
+        weather = self._weather_tool(context.destination)
         requirements = self._gather_requirements(context)
         result = self.engine.generate(context, weather)
         return {
@@ -123,8 +135,8 @@ class PackingAssistantService:
         }
 
     def describe(self, context: PackingContext) -> str:
-        weather = self.clients["weather"].get_current(context.destination)
-        requirements = self._gather_requirements(context)
+        weather = self._weather_tool(context.destination, callbacks=None)
+        requirements = self._gather_requirements(context, callbacks=None)
         result = self.engine.generate(context, weather)
         lines = [f"DeepseekTravels packing list for {context.destination}:"]
         for item in result.items:
@@ -137,15 +149,10 @@ class PackingAssistantService:
         return "\n".join(lines)
 
     def suggest_bookings(self, context: PackingContext) -> dict[str, Any]:
-        booking_client = self.clients["booking"]
-        flights = booking_client.search_flights(context.destination)
-        hotels = booking_client.search_hotels(context.destination)
+        booking_data = self._booking_tools(context.destination, callbacks=None)
         hold_id = f"HOLD-{context.destination.upper()}-001"
-        return {
-            "flights": flights.get("flights", []),
-            "hotels": hotels.get("hotels", []),
-            "hold_id": hold_id,
-        }
+        booking_data["hold_id"] = hold_id
+        return booking_data
 
     def confirm_booking(self, hold_id: str, *, confirm: bool) -> str:
         if not confirm:
@@ -153,7 +160,7 @@ class PackingAssistantService:
         return f"Booking confirmed for hold {hold_id}."
 
     def simple_checklist(self, context: PackingContext) -> str:
-        weather = self.clients["weather"].get_current(context.destination)
+        weather = self._weather_tool(context.destination, callbacks=None)
         result = self.engine.generate(context, weather)
         lines = [f"Quick checklist for {context.destination}:"]
         for item in result.items[:5]:
@@ -164,24 +171,225 @@ class PackingAssistantService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _gather_requirements(self, context: PackingContext) -> dict[str, list[str]]:
-        security = self.clients["requirements"].get_security_rules()
-        visa = {}
-        if context.nationality and context.destination_country:
-            visa = self.clients["requirements"].get_visa_requirements(
-                context.nationality, context.destination_country
+    def _weather_tool(
+        self,
+        destination: str,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        tool = self._get_tool("weather", "get_current_weather")
+        return self._invoke_tool(tool, {"location": destination}, callbacks=callbacks)
+
+    def _get_tool(self, server: str, tool_name: str) -> Any:
+        cache_key = (server, tool_name)
+        if cache_key in self._tool_cache:
+            return self._tool_cache[cache_key]
+
+        if self.mcp_agent_client is not None:
+            async def _fetch_tool() -> Any:
+                tools = await self.mcp_agent_client.get_tools(server_name=server)
+                for tool in tools:
+                    if tool.name == tool_name:
+                        return tool
+                raise ValueError(f"Tool {tool_name} not found on server {server}")
+
+            try:
+                tool = _run_async(_fetch_tool())
+            except Exception as exc:  # pragma: no cover - fallback path
+                warnings.warn(f"Falling back to fixture tool for {server}.{tool_name}: {exc}")
+                tool = self._fixture_tool(server, tool_name)
+        else:
+            tool = self._fixture_tool(server, tool_name)
+
+        self._tool_cache[cache_key] = tool
+        return tool
+
+    def _fixture_tool(self, server: str, tool_name: str) -> Any:
+        from . import mock_fixtures
+
+        if server == "weather" and tool_name == "get_current_weather":
+            return _FixtureTool(
+                tool_name,
+                lambda params: mock_fixtures.WEATHER_FIXTURES.get(
+                    (params.get("location") or "").lower(), mock_fixtures.WEATHER_FIXTURES["default"]
+                ),
             )
-        notes = []
-        if visa:
-            need = "Visa required" if visa.get("visa_required") else "Visa exemption"
-            notes.append(f"Visa status: {need}")
-            if visa.get("notes"):
-                notes.extend(visa["notes"])
-        if security:
-            notes.append("Security reminders: " + ", ".join(security.get("restricted", [])))
+        if server == "requirements" and tool_name == "get_airport_security_rules":
+            return _FixtureTool(tool_name, lambda _params: mock_fixtures.SECURITY_FIXTURES["default"])
+        if server == "requirements" and tool_name == "get_visa_requirements":
+            return _FixtureTool(
+                tool_name,
+                lambda params: mock_fixtures.VISA_FIXTURES.get(
+                    f"{(params.get('nationality') or '').lower()}-{(params.get('destination_country') or '').lower()}",
+                    mock_fixtures.VISA_FIXTURES["default"],
+                ),
+            )
+        if server == "booking" and tool_name in {"search_flights", "search_hotels", "search_activities"}:
+            fixtures = mock_fixtures.BOOKING_FIXTURES
+
+            def _handler(params):
+                destination = (params.get("destination") or "").lower()
+                data = fixtures.get(destination, fixtures["default"])
+                if tool_name == "search_flights":
+                    return {**params, "flights": data.get("flights", [])}
+                if tool_name == "search_hotels":
+                    return {**params, "hotels": data.get("hotels", [])}
+                return {**params, "activities": data.get("activities", [])}
+
+            return _FixtureTool(tool_name, _handler)
+
+        raise ValueError(f"No fixture tool available for {server}.{tool_name}")
+
+    def _requirements_tools(
+        self,
+        context: PackingContext,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> dict[str, Any]:
+        if self.mcp_agent_client is None:
+            from .mock_fixtures import SECURITY_FIXTURES, VISA_FIXTURES
+
+            security = SECURITY_FIXTURES["default"]
+            visa = {}
+            if context.nationality and context.destination_country:
+                key = f"{context.nationality.lower()}-{context.destination_country.lower()}"
+                visa = VISA_FIXTURES.get(key, VISA_FIXTURES["default"])
+            return {"security": security, "visa": visa}
+        requirements = {}
+        security_tool = self._get_tool("requirements", "get_airport_security_rules")
+        security = self._invoke_tool(
+            security_tool,
+            {
+                "airport_code": context.origin_city,
+                "country_code": context.destination_country,
+                "airline": context.airline,
+                "cabin_class": context.transportation_cabin_class,
+            },
+            callbacks=callbacks,
+        )
+        requirements["security"] = security
+        if context.nationality and context.destination_country:
+            visa_tool = self._get_tool("requirements", "get_visa_requirements")
+            visa = self._invoke_tool(
+                visa_tool,
+                {
+                    "nationality": context.nationality,
+                    "destination_country": context.destination_country,
+                    "stay_length_days": context.trip_length_days,
+                },
+                callbacks=callbacks,
+            )
+            requirements["visa"] = visa
+        return requirements
+
+    def _booking_tools(
+        self,
+        destination: str,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> dict[str, Any]:
+        if self.mcp_agent_client is None:
+            from .mock_fixtures import BOOKING_FIXTURES
+
+            data = BOOKING_FIXTURES.get(destination.lower(), BOOKING_FIXTURES["default"])
+            return {
+                "flights": data.get("flights", []),
+                "hotels": data.get("hotels", []),
+                "activities": data.get("activities", []),
+            }
+        flights_tool = self._get_tool("booking", "search_flights")
+        flights = self._invoke_tool(
+            flights_tool,
+            {
+                "origin": "",
+                "destination": destination,
+                "depart_date": "",
+                "return_date": None,
+                "passengers": 1,
+                "cabin_class": "economy",
+            },
+            callbacks=callbacks,
+        )
+        hotels_tool = self._get_tool("booking", "search_hotels")
+        hotels = self._invoke_tool(
+            hotels_tool,
+            {
+                "destination": destination,
+                "check_in": "",
+                "check_out": "",
+                "guests": 1,
+                "budget": None,
+            },
+            callbacks=callbacks,
+        )
+        activities_tool = self._get_tool("booking", "search_activities")
+        activities = self._invoke_tool(
+            activities_tool,
+            {
+                "destination": destination,
+                "start_date": "",
+                "end_date": None,
+                "interests": None,
+                "budget": None,
+            },
+            callbacks=callbacks,
+        )
         return {
-            "security": security.get("notes", []),
+            "flights": flights.get("flights", []),
+            "hotels": hotels.get("hotels", []),
+            "activities": activities.get("activities", []),
+        }
+
+    def _gather_requirements(
+        self,
+        context: PackingContext,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> dict[str, list[str]]:
+        requirements_data = self._requirements_tools(context, callbacks=callbacks)
+        security = requirements_data.get("security", {})
+        visa = requirements_data.get("visa", {})
+        notes: list[str] = []
+        if visa:
+            need = "Visa required" if visa.get("visa_requirement", visa.get("visa_required")) else "Visa exemption"
+            notes.append(f"Visa status: {need}")
+            visa_notes = visa.get("notes")
+            if visa_notes:
+                if isinstance(visa_notes, list):
+                    notes.extend(visa_notes)
+                else:
+                    notes.append(str(visa_notes))
+        restricted = security.get("restricted") or security.get("restricted_items") or []
+        if restricted:
+            notes.append("Security reminders: " + ", ".join(restricted))
+        security_notes = security.get("notes") or []
+        if isinstance(security_notes, str):
+            security_notes = [security_notes]
+        return {
+            "security": security_notes,
             "notes": notes,
         }
+
+    def _invoke_tool(
+        self,
+        tool: Any,
+        params: Dict[str, Any],
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        if isinstance(tool, _FixtureTool):
+            return tool.invoke(params)
+        if hasattr(tool, "ainvoke"):
+            result = _run_async(tool.ainvoke(params, callbacks=callbacks))
+        else:
+            result = tool.invoke(params, callbacks=callbacks)
+            if inspect.isawaitable(result):
+                result = _run_async(result)
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:  # pragma: no cover - defensive fallback
+                return {"raw": result}
+        return result
 
 
