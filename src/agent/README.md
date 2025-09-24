@@ -1,6 +1,12 @@
-# Attractions Booking Agent
+# DeepseekTravels - AI Travel Packing Assistant
 
-This notebook demonstrates a LangChain agent integrated with MCP (Model Context Protocol) tools for searching and booking tourist attractions. The agent uses Azure OpenAI and can help users discover attractions worldwide and make bookings, whilst checking the weather.
+## Overview
+DeepseekTravels is an AI assistant that generates optimized travel packing lists and optional booking suggestions, taking into account user constraints, trip parameters, weather, attraction plans, and regulatory requirements.
+
+## Phase 1 Implementation
+- **Status**: Phase 1 (Offline/Mock Mode)
+- **External HTTP**: All external calls are mocked/stubbed
+- **Architecture**: LangChain Agent + MCP Tools + Packing Engine
 
 ## Prerequisites
 
