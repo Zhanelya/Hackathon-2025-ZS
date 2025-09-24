@@ -29,8 +29,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     assist = sub.add_parser("assist", help="Interactive conversation mode")
-    assist.add_argument("destination", help="Trip destination")
-    assist.add_argument("trip_length_days", type=int)
 
     generate = sub.add_parser("generate", help="One-shot packing list")
     generate.add_argument("destination")
@@ -59,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         print(service.simple_checklist(ctx))
     elif args.command == "assist":
         print("Entering chat mode. Type 'exit' to quit.")
+        opener = service.start_conversation()
+        print(opener)
         while True:
             try:
                 question = input("You: ").strip()
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             if question.lower() in {"exit", "quit", "q"}:
                 print("Goodbye!")
                 break
-            reply = service.chat_once(question, ctx)
+            reply = service.process_conversation_turn(question)
             print(reply)
     elif args.command == "book":
         booking = service.suggest_bookings(ctx)

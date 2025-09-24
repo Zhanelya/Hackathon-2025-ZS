@@ -20,13 +20,25 @@ def test_cli_main_prints_placeholder(capsys):
 
 
 def test_cli_assist_loop(monkeypatch, capsys):
-    inputs = iter(["What should I pack?", "exit"])
+    inputs = iter([
+        "Rome",
+        "Italy",
+        "Polish",
+        "3",
+        "day, night",
+        "museum",
+        "1",
+        "0",
+        "0",
+        "0",
+        "What should I pack?",
+        "exit",
+    ])
 
     monkeypatch.setenv("DEEPSEEKTRAVELS_USE_MOCKS", "true")
-    monkeypatch.setenv("DEEPSEEKTRAVELS_OFFLINE", "true")
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
-    exit_code = main(["assist", "Berlin", "3"])
+    exit_code = main(["assist"])
 
     assert exit_code == 0
     captured = capsys.readouterr()

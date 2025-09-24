@@ -20,7 +20,9 @@ Build an AI assistant that generates an optimized travel packing list and option
 
 ## Functional Requirements
 - **Input collection**: destination(s), dates, trip length, activities (day/night, hiking, formal, beach, business), transport (flight/airline), accommodations, personal preferences (laundry, style), constraints (capacity in L, max weight, budget), and known documents.
+  - Agent now collects these interactively in chat mode before generating advice.
 - **Onboarding questions**: explicitly ask for backpack capacity (L), maximum comfortable carry weight (kg), airline/route, cabin class, mobility/health limitations (e.g., knee issues, need for meds), liquid constraints, and laundry availability.
+  - Chat flow prompts for number of adults, children, infants, and pets, confirming each before proceeding.
 - **Weather intake**: fetch current and forecast weather (reuse `weather` MCP) for relevant dates.
 - **Attractions intake**: optional attraction plans (reuse `attractions` MCP) to bias item categories (e.g., museum vs hiking).
 - **Regulatory checks**: identify prohibited/restricted items (airport), visa requirements, passport validity, entry paperwork, vaccinations where applicable.
@@ -30,6 +32,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 - **Explainability**: show which constraints and data influenced each recommendation.
 - **Item categorization and filters**: classify each item by safety status (safe/restricted/prohibited), priority (must-have/nice-to-have), weight class (light/medium/heavy), and category (clothing/toiletries/electronics/documents/health/accessories). Allow filtering/sorting and provide totals per class.
 - **Keep-it-simple mode**: output a minimal, printable checklist (plain text/markdown) with only item names, quantities, and a short high-priority notes section. Skip long explanations and avoid non-essential tool calls.
+  - CLI `simple` command now uses `simple_checklist` responses.
 - **Budgeting and costs (Phase 1.5)**: capture user budgets (overall, per-category like clothing/toiletries, and per booking type), estimate packing vs buy-at-destination tradeoffs, compute baggage fees risk based on weight/size, and include price ranges from mocked MCPs in summaries.
   - Status: implementation in progress with mocked data; live integrations deferred to Phase 2.
 
@@ -41,7 +44,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 - **Token efficiency**: cap max tokens per response, summarize chat history aggressively, truncate irrelevant memory, and limit tool-call fan-out. Prefer structured terse outputs in keep-it-simple mode. Refuse off-topic tasks to avoid token waste.
 - **Scope/guardrails**: the assistant is strictly for travel planning/packing. Politely refuse unrelated domains; avoid medical/legal advice beyond linking to official sources; disallow dangerous or disallowed items; rate-limit excessively long prompts and enforce message length caps.
 - **Offline-first (Phase 1)**: default to strict offline/mock mode with zero external HTTP. Any attempt to call live endpoints should raise a clear error.
-- **LLM integration**: DeepseekTravels defaults to the LangChain Azure OpenAI agent whenever required env vars are set; falls back to deterministic mock engine otherwise.
+- **LLM integration**: DeepseekTravels defaults to the LangChain Azure OpenAI agent whenever required env vars are set; falls back to deterministic mock engine otherwise. System prompt resides in `src/agent/prompts/system_prompt.txt` and includes interactive onboarding instructions.
 
 ## Architecture Overview (patterned after `src/agent/attractions.ipynb`)
 Replicate the notebook structure with analogous cells:

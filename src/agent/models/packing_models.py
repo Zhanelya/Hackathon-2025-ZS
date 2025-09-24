@@ -63,6 +63,10 @@ class PackingContext:
     budgets_by_category: Optional[dict[str, float]] = None
     nationality: Optional[str] = None
     destination_country: Optional[str] = None
+    carrying_children: Optional[int] = None
+    carrying_infants: Optional[int] = None
+    traveling_adults: Optional[int] = None
+    traveling_pets: Optional[int] = None
 
 
 __all__ = [

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import re
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -11,6 +13,120 @@ from ..models.packing_models import PackingContext
 from ..packing.engine import DeepseekTravelsEngine
 from .langchain_agent import build_langchain_agent
 from .mcp_clients import build_mock_clients
+
+
+INTERACTIVE_FIELDS = [
+    {
+        "field": "destination",
+        "question": "Great! Where are you traveling to?",
+        "required": True,
+    },
+    {
+        "field": "destination_country",
+        "question": "Which country or region is that in?",
+        "required": True,
+    },
+    {
+        "field": "nationality",
+        "question": "What nationality or passport are you traveling with (for visa guidance)?",
+        "required": True,
+    },
+    {
+        "field": "trip_length_days",
+        "question": "How many days will you be away?",
+        "required": True,
+    },
+    {
+        "field": "time_of_day_usage",
+        "question": "Will your plans be mostly daytime, nighttime, or both?",
+        "required": True,
+    },
+    {
+        "field": "activities",
+        "question": "Any key activities planned (e.g., hiking, beach, business meetings)?",
+        "required": True,
+    },
+    {
+        "field": "traveling_adults",
+        "question": "How many adults are traveling (including you)?",
+        "required": True,
+    },
+    {
+        "field": "carrying_children",
+        "question": "How many children (ages 2–12) are coming along? (0 if none)",
+        "required": True,
+    },
+    {
+        "field": "carrying_infants",
+        "question": "Any infants under 2 traveling? (0 if none)",
+        "required": True,
+    },
+    {
+        "field": "traveling_pets",
+        "question": "Are any pets traveling? If yes, how many (or say 0)?",
+        "required": False,
+    },
+    {
+        "field": "capacity_liters",
+        "question": "What’s the capacity of your main bag in liters? If unsure, say skip.",
+        "required": False,
+    },
+    {
+        "field": "max_weight_kg",
+        "question": "What’s the maximum weight you can comfortably carry (kg)? If unsure, say skip.",
+        "required": False,
+    },
+]
+
+FIELD_LOOKUP = {item["field"]: item for item in INTERACTIVE_FIELDS}
+
+
+NUMERIC_FIELDS = {
+    "trip_length_days",
+    "capacity_liters",
+    "max_weight_kg",
+    "traveling_adults",
+    "carrying_children",
+    "carrying_infants",
+    "traveling_pets",
+}
+
+
+def _parse_numeric(value: str) -> Optional[float]:
+    value = value.strip()
+    if not value:
+        return None
+    if value.lower() in {"skip", "n/a", "none"}:
+        return None
+    match = re.search(r"\d+(\.\d+)?", value)
+    if not match:
+        return None
+    parsed = float(match.group())
+    return parsed
+
+
+def _missing_required_fields(context: PackingContext) -> list[str]:
+    missing = []
+    for item in INTERACTIVE_FIELDS:
+        if not item["required"]:
+            continue
+        value = getattr(context, item["field"], None)
+        if value in (None, "", [], {}):
+            missing.append(item["field"])
+    return missing
+
+
+def _run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    else:  # pragma: no cover
+        return loop.run_until_complete(coro)
+
+"""
+Helper functions for LLM usage.
+"""
 
 
 def _should_use_llm() -> bool:
@@ -27,6 +143,14 @@ def _should_use_llm() -> bool:
 
 
 @dataclass
+class ConversationState:
+    context: PackingContext
+    awaiting_field: Optional[str] = None
+    skipped_fields: set[str] = field(default_factory=set)
+    ready: bool = False
+
+
+@dataclass
 class PackingAssistantService:
     """Facade for coordinating engine and mock MCP clients."""
 
@@ -36,6 +160,24 @@ class PackingAssistantService:
     agent_executor: Optional[Any] = None
     mcp_agent_client: Optional[Any] = None
     llm_enabled: bool = False
+    state: ConversationState = field(
+        default_factory=lambda: ConversationState(
+            context=PackingContext(
+                destination="",
+                destination_country=None,
+                nationality=None,
+                trip_length_days=0,
+                activities=[],
+                time_of_day_usage=[],
+                capacity_liters=None,
+                max_weight_kg=None,
+                traveling_adults=None,
+                carrying_children=None,
+                carrying_infants=None,
+                traveling_pets=None,
+            )
+        )
+    )
 
     @classmethod
     def create(cls) -> "PackingAssistantService":
@@ -57,6 +199,60 @@ class PackingAssistantService:
             mcp_agent_client=mcp_client,
             llm_enabled=use_llm,
         )
+
+    def start_conversation(self) -> str:
+        self.state.awaiting_field = "destination"
+        return "Hi! I’m DeepseekTravels. Before I build your packing plan, let’s gather a few quick details. First, where are you traveling to?"
+
+    def process_conversation_turn(self, user_input: str) -> str:
+        if not user_input.strip():
+            return "I didn’t catch that—could you repeat?"
+
+        if self.state.awaiting_field:
+            field = self.state.awaiting_field
+            info = FIELD_LOOKUP[field]
+            if field in NUMERIC_FIELDS:
+                numeric = _parse_numeric(user_input)
+                if numeric is None:
+                    if info["required"]:
+                        return "Thanks! I wasn’t able to parse a number—could you provide it in digits (or say skip)?"
+                    else:
+                        self.state.skipped_fields.add(field)
+                        setattr(self.state.context, field, None)
+                    self.state.awaiting_field = None
+                else:
+                    if field in {"traveling_adults", "carrying_children", "carrying_infants", "traveling_pets"}:
+                        setattr(self.state.context, field, int(numeric))
+                    elif field == "trip_length_days":
+                        setattr(self.state.context, field, int(max(1, numeric)))
+                    else:
+                        setattr(self.state.context, field, numeric)
+                    self.state.awaiting_field = None
+            else:
+                if user_input.lower() in {"skip", "none", "n/a"} and not info["required"]:
+                    setattr(self.state.context, field, None)
+                elif field in {"activities", "time_of_day_usage"}:
+                    tokens = [token.strip() for token in user_input.split(",") if token.strip()]
+                    if not tokens and info["required"]:
+                        return "Could you list at least one item (use commas if there are multiple)?"
+                    setattr(self.state.context, field, tokens)
+                else:
+                    setattr(self.state.context, field, user_input.strip())
+                self.state.awaiting_field = None
+
+        missing = _missing_required_fields(self.state.context)
+        if missing:
+            next_field = missing[0]
+            self.state.awaiting_field = next_field
+            return FIELD_LOOKUP[next_field]["question"]
+
+        if not self.state.ready:
+            self.state.ready = True
+            return (
+                "Perfect, I have everything I need! Ask me anything about packing, weather, or bookings, and I’ll tailor the answer to your trip."
+            )
+
+        return self.chat_once(user_input, self.state.context)
 
     def generate_packing_list(self, context: PackingContext) -> dict[str, Any]:
         weather = self.clients["weather"].get_current(context.destination)
