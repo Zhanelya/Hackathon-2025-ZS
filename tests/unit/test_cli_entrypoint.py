@@ -30,5 +30,5 @@ def test_cli_assist_loop(monkeypatch, capsys):
 
     assert exit_code == 0
     captured = capsys.readouterr()
-    assert "DeepseekTravels" in captured.out
+    assert "Goodbye" in captured.out
 

@@ -41,6 +41,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 - **Token efficiency**: cap max tokens per response, summarize chat history aggressively, truncate irrelevant memory, and limit tool-call fan-out. Prefer structured terse outputs in keep-it-simple mode. Refuse off-topic tasks to avoid token waste.
 - **Scope/guardrails**: the assistant is strictly for travel planning/packing. Politely refuse unrelated domains; avoid medical/legal advice beyond linking to official sources; disallow dangerous or disallowed items; rate-limit excessively long prompts and enforce message length caps.
 - **Offline-first (Phase 1)**: default to strict offline/mock mode with zero external HTTP. Any attempt to call live endpoints should raise a clear error.
+- **LLM integration**: DeepseekTravels defaults to the LangChain Azure OpenAI agent whenever required env vars are set; falls back to deterministic mock engine otherwise.
 
 ## Architecture Overview (patterned after `src/agent/attractions.ipynb`)
 Replicate the notebook structure with analogous cells:

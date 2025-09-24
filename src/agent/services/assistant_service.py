@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..models.packing_models import PackingContext
 from ..packing.engine import DeepseekTravelsEngine
+from .langchain_agent import build_langchain_agent
 from .mcp_clients import build_mock_clients
+
+
+def _should_use_llm() -> bool:
+    env_flag = os.getenv("DEEPSEEKTRAVELS_USE_LLM")
+    if env_flag is not None:
+        return env_flag.lower() == "true"
+    required_env = [
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_DEPLOYMENT",
+    ]
+    return all(os.getenv(key) for key in required_env)
 
 
 @dataclass
@@ -17,12 +33,30 @@ class PackingAssistantService:
     engine: DeepseekTravelsEngine
     clients: Dict[str, Any]
     history: List[str] = field(default_factory=list)
+    agent_executor: Optional[Any] = None
+    mcp_agent_client: Optional[Any] = None
+    llm_enabled: bool = False
 
     @classmethod
     def create(cls) -> "PackingAssistantService":
         clients = build_mock_clients()
         engine = DeepseekTravelsEngine()
-        return cls(engine=engine, clients=clients)
+        use_llm = _should_use_llm()
+        agent_executor: Optional[Any] = None
+        mcp_client: Optional[Any] = None
+        if use_llm:
+            try:
+                agent_executor, mcp_client = build_langchain_agent()
+            except Exception as exc:  # pragma: no cover - integration guard
+                warnings.warn(f"Falling back to mock engine due to LLM init error: {exc}")
+                use_llm = False
+        return cls(
+            engine=engine,
+            clients=clients,
+            agent_executor=agent_executor,
+            mcp_agent_client=mcp_client,
+            llm_enabled=use_llm,
+        )
 
     def generate_packing_list(self, context: PackingContext) -> dict[str, Any]:
         weather = self.clients["weather"].get_current(context.destination)
@@ -50,6 +84,20 @@ class PackingAssistantService:
         return "\n".join(lines)
 
     def chat_once(self, message: str, context: PackingContext) -> str:
+        if self.llm_enabled and self.agent_executor is not None:
+            context_blob = ", ".join(
+                f"{key}={value}"
+                for key, value in context.__dict__.items()
+                if value not in (None, [], {})
+            )
+            formatted_input = (
+                f"Trip context: {context_blob if context_blob else 'not provided'}\n"
+                f"User question: {message}"
+            )
+            payload = {"input": formatted_input}
+            result = self.agent_executor.invoke(payload)
+            return result.get("output") or result.get("final_output") or ""
+
         self.history.append(f"user: {message}")
         weather = self.clients["weather"].get_current(context.destination)
         requirements = self._gather_requirements(context)
