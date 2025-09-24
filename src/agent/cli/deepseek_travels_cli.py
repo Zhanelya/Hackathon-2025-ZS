@@ -39,7 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     simple = sub.add_parser("simple", help="Keep-it-simple checklist")
     simple.add_argument("destination")
 
-    sub.add_parser("book", help="Booking suggestion flow (mock only)")
+    book = sub.add_parser("book", help="Booking suggestion flow (mock only)")
+    book.add_argument("destination")
+    book.add_argument("trip_length_days", type=int)
 
     return parser
 
@@ -54,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "generate":
         print(service.describe(ctx))
     elif args.command == "simple":
-        print(service.describe(ctx))
+        print(service.simple_checklist(ctx))
     elif args.command == "assist":
         print("Entering chat mode. Type 'exit' to quit.")
         while True:
@@ -70,6 +72,19 @@ def main(argv: list[str] | None = None) -> int:
                 break
             reply = service.chat_once(question, ctx)
             print(reply)
+    elif args.command == "book":
+        booking = service.suggest_bookings(ctx)
+        print("Suggested flights:")
+        for flight in booking["flights"]:
+            print(f"- {flight['summary']} ({flight['price']} {flight['currency']})")
+        print("Suggested hotels:")
+        for hotel in booking["hotels"]:
+            print(f"- {hotel['summary']} ({hotel['price']} {hotel['currency']})")
+        confirmation = input(
+            f"Hold ID {booking['hold_id']} ready. Confirm booking? (yes/no): "
+        ).strip().lower()
+        message = service.confirm_booking(booking["hold_id"], confirm=confirmation in {"y", "yes"})
+        print(message)
     else:
         print("DeepseekTravels interactive modes coming soon. (mock mode)")
     return 0

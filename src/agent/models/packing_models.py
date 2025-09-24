@@ -61,6 +61,8 @@ class PackingContext:
     max_weight_kg: Optional[float] = None
     budget_total: Optional[float] = None
     budgets_by_category: Optional[dict[str, float]] = None
+    nationality: Optional[str] = None
+    destination_country: Optional[str] = None
 
 
 __all__ = [

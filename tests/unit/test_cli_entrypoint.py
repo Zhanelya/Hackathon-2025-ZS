@@ -16,7 +16,7 @@ def test_cli_main_prints_placeholder(capsys):
 
     assert exit_code == 0
     captured = capsys.readouterr()
-    assert "DeepseekTravels packing list" in captured.out
+    assert "Quick checklist" in captured.out
 
 
 def test_cli_assist_loop(monkeypatch, capsys):

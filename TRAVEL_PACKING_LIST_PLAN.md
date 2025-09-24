@@ -31,6 +31,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 - **Item categorization and filters**: classify each item by safety status (safe/restricted/prohibited), priority (must-have/nice-to-have), weight class (light/medium/heavy), and category (clothing/toiletries/electronics/documents/health/accessories). Allow filtering/sorting and provide totals per class.
 - **Keep-it-simple mode**: output a minimal, printable checklist (plain text/markdown) with only item names, quantities, and a short high-priority notes section. Skip long explanations and avoid non-essential tool calls.
 - **Budgeting and costs (Phase 1.5)**: capture user budgets (overall, per-category like clothing/toiletries, and per booking type), estimate packing vs buy-at-destination tradeoffs, compute baggage fees risk based on weight/size, and include price ranges from mocked MCPs in summaries.
+  - Status: implementation in progress with mocked data; live integrations deferred to Phase 2.
 
 ## Non-Functional Requirements
 - **Safety**: never perform bookings without explicit user confirmation. Flag uncertainties and provide sources for regulatory advice.
