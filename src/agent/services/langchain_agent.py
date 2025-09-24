@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Tuple
+from typing import Any, Dict, Tuple, Callable
 
 from dotenv import load_dotenv
 
@@ -14,9 +14,61 @@ from langchain_openai import AzureChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
+from langchain_core.tools import ToolException, StructuredTool
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from .safety_tools import create_safety_tool
+MANDATORY_TOOL_ARGS: Dict[str, tuple[str, ...]] = {
+    "get_current_weather": ("location",),
+    "get_weather_forecast": ("location",),
+    "get_attraction_details": ("attraction_id",),
+    "book_attraction": ("attraction_id", "visitor_name", "email", "visit_date"),
+    "search_flights": ("origin", "destination", "depart_date"),
+    "search_hotels": ("destination", "check_in", "check_out"),
+    "search_activities": ("destination", "start_date"),
+    "get_visa_requirements": ("nationality", "destination_country"),
+    "check_baggage_allowance": ("airline",),
+    "hold_booking": ("booking_type", "booking_payload"),
+    "confirm_booking": ("hold_id",),
+}
+
+
+def _guard_tool(tool: Any) -> Any:
+    required = MANDATORY_TOOL_ARGS.get(tool.name)
+    if not required:
+        return tool
+
+    args_schema = getattr(tool, "args_schema", None)
+
+    def _validate(params: Dict[str, Any]):
+        missing = [arg for arg in required if not params.get(arg)]
+        if missing:
+            raise ToolException(
+                "Missing required parameters: "
+                + ", ".join(missing)
+                + ". Please gather these trip details before calling this tool."
+            )
+
+    if hasattr(tool, "ainvoke"):
+        async def async_wrapper(**kwargs):
+            _validate(kwargs)
+            return await tool.ainvoke(kwargs)
+    else:
+        async_wrapper = None
+
+    def sync_wrapper(**kwargs):
+        _validate(kwargs)
+        if hasattr(tool, "invoke"):
+            return tool.invoke(kwargs)
+        return _run_async(tool.ainvoke(kwargs))
+
+    return StructuredTool(
+        name=tool.name,
+        description=tool.description,
+        args_schema=args_schema,
+        func=sync_wrapper,
+        coroutine=async_wrapper,
+    )
 
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "prompts", "comprehensive_system_prompt.txt")
 with open(PROMPT_PATH, "r", encoding="utf-8") as prompt_file:
@@ -85,12 +137,14 @@ def build_langchain_agent() -> Tuple[AgentExecutor, MultiServerMCPClient]:
         ]
     )
 
-    agent = create_tool_calling_agent(llm, tools, prompt)
+    guarded_tools = [_guard_tool(tool) for tool in tools]
+
+    agent = create_tool_calling_agent(llm, guarded_tools, prompt)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
     executor = AgentExecutor(
         agent=agent,
-        tools=tools,
+        tools=guarded_tools,
         memory=memory,
         verbose=False,
         handle_parsing_errors=True,
