@@ -153,8 +153,10 @@ class PackingAssistantService:
         except RuntimeError as exc:
             return self._format_tool_error(str(exc))
 
-        # Add safety check in fallback mode
-        safety_warning = self.check_destination_safety(minimal_context.destination)
+        # Add safety check in fallback mode only after required details exist
+        safety_warning = None
+        if minimal_context.destination not in {"", "Unknown destination"}:
+            safety_warning = self.check_destination_safety(minimal_context.destination)
 
         result = self.engine.generate(minimal_context, weather)
         summary = ", ".join(f"{item.name} x{item.quantity}" for item in result.items[:5])
