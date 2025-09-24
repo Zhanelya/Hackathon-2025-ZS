@@ -1,0 +1,45 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run unit and e2e tests",
+			"type": "shell",
+			"command": "pytest -q",
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run pytest (venv)",
+			"type": "shell",
+			"command": "C:/Code/Hackathon-2025-ZS/.venv/Scripts/python.exe -m pytest -q",
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run pytest (venv) - retry",
+			"type": "shell",
+			"command": "C:/Code/Hackathon-2025-ZS/.venv/Scripts/python.exe -m pytest -q",
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run tests after Iteration 1",
+			"type": "shell",
+			"command": "C:/Code/Hackathon-2025-ZS/.venv/Scripts/python.exe -m pytest -q",
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		}
+	]
+}
