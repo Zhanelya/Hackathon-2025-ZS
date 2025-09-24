@@ -88,5 +88,11 @@ def build_langchain_agent() -> Tuple[AgentExecutor, MultiServerMCPClient]:
     agent = create_tool_calling_agent(llm, tools, prompt)
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-    executor = AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=False)
+    executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        memory=memory,
+        verbose=False,
+        handle_parsing_errors=True,
+    )
     return executor, mcp_client

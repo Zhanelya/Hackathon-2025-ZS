@@ -47,5 +47,22 @@ BAGGAGE_FIXTURES = {
             "personal_item": "Laptop bag or briefcase",
         },
     },
+    "lot": {
+        "economy": {
+            "checked_allowance": "1 bag up to 23kg (LOT standard)",
+            "carry_on": "1 carry-on up to 8kg (55x40x23cm)",
+            "personal_item": "Handbag, laptop bag, or small backpack",
+        },
+        "business": {
+            "checked_allowance": "2 bags up to 32kg each",
+            "carry_on": "2 carry-on bags up to 9kg each",
+            "personal_item": "Laptop bag or garment bag",
+        },
+        "default": {
+            "checked_allowance": "1 bag up to 23kg",
+            "carry_on": "1 carry-on up to 8kg",
+            "personal_item": "Handbag or laptop bag",
+        },
+    },
 }
 

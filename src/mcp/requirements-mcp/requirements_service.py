@@ -45,8 +45,16 @@ class RequirementsRouter:
         return info
 
     def check_baggage_allowance(self, airline: str, cabin_class: str) -> Dict[str, Any]:
-        airline_data = self.baggage_fixtures.get(airline.lower(), self.baggage_fixtures["default"])
-        return airline_data.get(cabin_class.lower(), airline_data["default"])
+        airline_key = (airline or "").lower()
+        cabin_key = (cabin_class or "").lower() or "default"
+
+        airline_data = self.baggage_fixtures.get(airline_key, self.baggage_fixtures["default"])
+        result = airline_data.get(cabin_key)
+        if result is None:
+            if "default" in airline_data:
+                return airline_data["default"]
+            return self.baggage_fixtures["default"].get(cabin_key, self.baggage_fixtures["default"]["economy"])
+        return result
 
     def format_requirements_resource(self, nationality: str, destination: str) -> str:
         visa = self.get_visa_requirements(nationality, destination, stay_length_days=7)

@@ -15,20 +15,6 @@ from .mcp_clients import build_mock_clients
 from .safety_service import CountrySafetyService, extract_country_from_destination
 
 
-def _should_use_llm() -> bool:
-    env_flag = os.getenv("DEEPSEEKTRAVELS_USE_LLM")
-    if env_flag is not None:
-        return env_flag.lower() == "true"
-    required_env = [
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_API_VERSION",
-        "AZURE_OPENAI_DEPLOYMENT",
-    ]
-    
-    return all(os.getenv(key) for key in required_env)
-
-
 @dataclass
 class PackingAssistantService:
     """Facade for coordinating packing logic and optional LangChain agent."""
@@ -42,12 +28,37 @@ class PackingAssistantService:
     llm_enabled: bool = False
     _tool_cache: Dict[tuple[str, str], Any] = field(default_factory=dict)
 
+    @staticmethod
+    def _format_tool_error(error: str) -> dict[str, Any]:
+        return {
+            "errors": [
+                error,
+                (
+                    "Action needed: confirm origin, destination, departure date, travellers (number/ages/nationalities), trip length, planned activities, "
+                    "baggage limits, health/mobility constraints, and budget. If all details look right, let me know and we can retry or adjust the request."
+                ),
+            ]
+        }
+
+    def _should_use_llm() -> bool:
+        env_flag = os.getenv("DEEPSEEKTRAVELS_USE_LLM")
+        if env_flag is not None:
+            return env_flag.lower() == "true"
+        required_env = [
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_API_VERSION",
+            "AZURE_OPENAI_DEPLOYMENT",
+        ]
+        
+        return all(os.getenv(key) for key in required_env)
+
     @classmethod
     def create(cls) -> "PackingAssistantService":
         clients = build_mock_clients()
         engine = DeepseekTravelsEngine()
         safety_service = CountrySafetyService()
-        use_llm = _should_use_llm()
+        use_llm = cls._should_use_llm()
         agent_executor: Optional[Any] = None
         mcp_client: Optional[Any] = clients.get("mcp_client")
         if use_llm:
@@ -101,7 +112,15 @@ class PackingAssistantService:
             return "I didn't catch that—could you repeat?"
 
         # The LangChain agent now handles safety checks through the safety tool
-        return self.chat_once(message=user_input, context=None, callbacks=callbacks)
+        reply = self.chat_once(message=user_input, context=None, callbacks=callbacks)
+        if isinstance(reply, dict) and reply.get("errors"):
+            error_messages = "\n".join(f"- {err}" for err in reply["errors"])
+            return (
+                "I hit some issues calling required tools:\n"
+                f"{error_messages}\n"
+                "Can you confirm or update: origin, destination, departure date, travellers (number/ages/nationalities), trip length, planned activities, baggage limits, health constraints, and budget?"
+            )
+        return reply
 
     def chat_once(
         self,
@@ -112,8 +131,13 @@ class PackingAssistantService:
     ) -> str:
         if self.llm_enabled and self.agent_executor is not None:
             payload = {"input": message}
-            result = _run_async(self.agent_executor.ainvoke(payload, callbacks=callbacks))
-            return result.get("output") or result.get("final_output") or ""
+            try:
+                result = _run_async(self.agent_executor.ainvoke(payload, callbacks=callbacks))
+                return result.get("output") or result.get("final_output") or ""
+            except RuntimeError as exc:
+                return self._format_tool_error(str(exc))
+            except Exception as exc:  # pragma: no cover - defensive catch
+                return self._format_tool_error(str(exc))
 
         # Fallback heuristic response using rule-based engine (should rarely be used)
         self.history.append(f"user: {message}")
@@ -123,8 +147,11 @@ class PackingAssistantService:
             activities=["general"],
             time_of_day_usage=["day"],
         )
-        weather = self._weather_tool(minimal_context.destination, callbacks=callbacks)
-        requirements = self._gather_requirements(minimal_context, callbacks=callbacks)
+        try:
+            weather = self._weather_tool(minimal_context.destination, callbacks=callbacks)
+            requirements = self._gather_requirements(minimal_context, callbacks=callbacks)
+        except RuntimeError as exc:
+            return self._format_tool_error(str(exc))
 
         # Add safety check in fallback mode
         safety_warning = self.check_destination_safety(minimal_context.destination)
@@ -223,7 +250,8 @@ class PackingAssistantService:
         callbacks: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         tool = self._get_tool("weather", "get_current_weather")
-        return self._invoke_tool(tool, {"location": destination}, callbacks=callbacks)
+        result = self._invoke_tool(tool, {"location": destination}, callbacks=callbacks)
+        return result
 
     def _get_tool(self, server: str, tool_name: str) -> Any:
         cache_key = (server, tool_name)
@@ -243,8 +271,9 @@ class PackingAssistantService:
         try:
             tool = _run_async(_fetch_tool())
         except Exception as exc:
-            print(f"[MCP ERROR] Unable to load tool {server}.{tool_name}: {exc}")
-            raise
+            message = f"Unable to load tool {server}.{tool_name}: {exc}"
+            print(f"[MCP ERROR] {message}")
+            raise RuntimeError(message) from exc
 
         self._tool_cache[cache_key] = tool
         return tool
@@ -292,9 +321,21 @@ class PackingAssistantService:
     ) -> dict[str, Any]:
         if self.mcp_agent_client is None:
             raise RuntimeError("MCP client not initialised; cannot retrieve booking data.")
-        flights_tool = self._get_tool("booking", "search_flights")
-        flights = self._invoke_tool(
-            flights_tool,
+        errors: list[str] = []
+
+        def _safe_call(server: str, tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+            try:
+                tool = self._get_tool(server, tool_name)
+                return self._invoke_tool(tool, payload, callbacks=callbacks)
+            except Exception as exc:
+                message = f"{server}.{tool_name} failed: {exc}"
+                print(f"[MCP ERROR] {message}")
+                errors.append(message)
+                return {}
+
+        flights = _safe_call(
+            "booking",
+            "search_flights",
             {
                 "origin": "",
                 "destination": destination,
@@ -303,11 +344,10 @@ class PackingAssistantService:
                 "passengers": 1,
                 "cabin_class": "economy",
             },
-            callbacks=callbacks,
         )
-        hotels_tool = self._get_tool("booking", "search_hotels")
-        hotels = self._invoke_tool(
-            hotels_tool,
+        hotels = _safe_call(
+            "booking",
+            "search_hotels",
             {
                 "destination": destination,
                 "check_in": "",
@@ -315,11 +355,10 @@ class PackingAssistantService:
                 "guests": 1,
                 "budget": None,
             },
-            callbacks=callbacks,
         )
-        activities_tool = self._get_tool("booking", "search_activities")
-        activities = self._invoke_tool(
-            activities_tool,
+        activities = _safe_call(
+            "booking",
+            "search_activities",
             {
                 "destination": destination,
                 "start_date": "",
@@ -327,13 +366,18 @@ class PackingAssistantService:
                 "interests": None,
                 "budget": None,
             },
-            callbacks=callbacks,
         )
-        return {
+
+        result = {
             "flights": flights.get("flights", []),
             "hotels": hotels.get("hotels", []),
             "activities": activities.get("activities", []),
         }
+
+        if errors:
+            result["errors"] = errors
+
+        return result
 
     def _gather_requirements(
         self,
@@ -381,8 +425,9 @@ class PackingAssistantService:
                     result = _run_async(result)
         except Exception as exc:
             tool_name = getattr(tool, "name", repr(tool))
-            print(f"[MCP ERROR] Tool invocation failed for {tool_name}: {exc}")
-            raise
+            message = f"Tool invocation failed for {tool_name}: {exc}"
+            print(f"[MCP ERROR] {message}")
+            raise RuntimeError(message) from exc
         if isinstance(result, str):
             try:
                 return json.loads(result)
