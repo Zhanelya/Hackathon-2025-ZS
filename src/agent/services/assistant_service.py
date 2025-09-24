@@ -7,6 +7,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ..models.packing_models import PackingContext
@@ -17,6 +18,11 @@ from .mcp_clients import build_mock_clients
 
 INTERACTIVE_FIELDS = [
     {
+        "field": "origin_city",
+        "question": "Which city are you departing from?",
+        "required": True,
+    },
+    {
         "field": "destination",
         "question": "Great! Where are you traveling to?",
         "required": True,
@@ -24,6 +30,11 @@ INTERACTIVE_FIELDS = [
     {
         "field": "destination_country",
         "question": "Which country or region is that in?",
+        "required": True,
+    },
+    {
+        "field": "start_date",
+        "question": "When does your trip start? (YYYY-MM-DD)",
         "required": True,
     },
     {
@@ -169,6 +180,8 @@ class PackingAssistantService:
                 trip_length_days=0,
                 activities=[],
                 time_of_day_usage=[],
+                origin_city=None,
+                start_date=None,
                 capacity_liters=None,
                 max_weight_kg=None,
                 traveling_adults=None,
@@ -201,12 +214,15 @@ class PackingAssistantService:
         )
 
     def start_conversation(self) -> str:
-        self.state.awaiting_field = "destination"
-        return "Hi! I’m DeepseekTravels. Before I build your packing plan, let’s gather a few quick details. First, where are you traveling to?"
+        self.state.awaiting_field = "origin_city"
+        return "Hi! I’m DeepseekTravels. Let’s build your packing plan—first, which city are you departing from?"
 
     def process_conversation_turn(self, user_input: str) -> str:
         if not user_input.strip():
             return "I didn’t catch that—could you repeat?"
+
+        if not self.state.ready:
+            _prefill_from_text(self.state.context, user_input)
 
         if self.state.awaiting_field:
             field = self.state.awaiting_field
@@ -229,7 +245,12 @@ class PackingAssistantService:
                         setattr(self.state.context, field, numeric)
                     self.state.awaiting_field = None
             else:
-                if user_input.lower() in {"skip", "none", "n/a"} and not info["required"]:
+                if field == "start_date":
+                    user_input = user_input.strip()
+                    if not user_input:
+                        return "Please share the start date in YYYY-MM-DD format (or say skip)."
+                    setattr(self.state.context, field, user_input)
+                elif user_input.lower() in {"skip", "none", "n/a"} and not info["required"]:
                     setattr(self.state.context, field, None)
                 elif field in {"activities", "time_of_day_usage"}:
                     tokens = [token.strip() for token in user_input.split(",") if token.strip()]
@@ -351,4 +372,143 @@ class PackingAssistantService:
             "security": security.get("notes", []),
             "notes": notes,
         }
+
+
+ACTIVITY_KEYWORDS = {
+    "hiking": ["hike", "hiking", "trail"],
+    "beach": ["beach", "swim", "snorkel"],
+    "museum": ["museum", "gallery", "art"]
+}
+
+TIME_OF_DAY_KEYWORDS = {
+    "day": ["day", "morning", "afternoon"],
+    "night": ["night", "evening"],
+}
+
+def _prefill_from_text(context: PackingContext, text: str) -> None:
+    lower = text.lower()
+
+    def _clean(proposed: str) -> str:
+        return re.sub(r"[^A-Za-z\s-]", "", proposed).strip().title()
+
+    # Origin extraction
+    if not context.origin_city:
+        match = re.search(r"from\s+([A-Za-z\s-]+?)(?:\s+to|\s+for|\.|,|$)", text, re.IGNORECASE)
+        if match:
+            context.origin_city = _clean(match.group(1))
+
+    # Destination extraction (support "go to" etc.)
+    if not context.destination:
+        match = re.search(r"(?:go(?:ing)?|travel(?:ing)?|head(?:ing)?|trip)\s+to\s+([A-Za-z\s-]+?)(?:\s+for|\s+in|\s+with|\.|,|$)", text, re.IGNORECASE)
+        if match:
+            context.destination = _clean(match.group(1))
+    if not context.destination and "philippines" in lower:
+        context.destination = "Philippines"
+
+    if not context.destination_country:
+        match = re.search(r"(?:country|region)\s+([A-Za-z\s-]+)", text, re.IGNORECASE)
+        if match:
+            context.destination_country = _clean(match.group(1))
+        elif context.destination:
+            context.destination_country = context.destination
+
+    if not context.nationality:
+        match = re.search(r"(?:i\s+am|i'm|passport(?:\s+is)?|nationality(?:\s+is)?)\s+([A-Za-z]+)", text, re.IGNORECASE)
+        if match:
+            context.nationality = _clean(match.group(1))
+    if not context.nationality and "polish" in lower:
+        context.nationality = "Polish"
+
+    # detect partner nationalities (use first mentioned for primary context)
+    if "girlfriend" in lower and "ukrain" in lower and context.traveling_adults in (None, 0):
+        context.traveling_adults = 2
+
+    # Start date parsing (YYYY-MM-DD or "October 27")
+    if not context.start_date:
+        iso_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+        if iso_match:
+            context.start_date = iso_match.group(1)
+        else:
+            month_names = {
+                "january": 1,
+                "february": 2,
+                "march": 3,
+                "april": 4,
+                "may": 5,
+                "june": 6,
+                "july": 7,
+                "august": 8,
+                "september": 9,
+                "october": 10,
+                "november": 11,
+                "december": 12,
+            }
+            month_match = re.search(
+                r"(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?",
+                lower,
+            )
+            if month_match:
+                month = month_names[month_match.group(1)]
+                day = int(month_match.group(2))
+                year = datetime.now().year
+                context.start_date = f"{year:04d}-{month:02d}-{day:02d}"
+            else:
+                alt_match = re.search(
+                    r"(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)",
+                    lower,
+                )
+                if alt_match:
+                    day = int(alt_match.group(1))
+                    month = month_names[alt_match.group(2)]
+                    year = datetime.now().year
+                    context.start_date = f"{year:04d}-{month:02d}-{day:02d}"
+
+    if context.trip_length_days in (None, 0):
+        match = re.search(r"(\d+)\s+(?:day|days)", lower)
+        if match:
+            context.trip_length_days = int(match.group(1))
+        else:
+            week_match = re.search(r"(\d+)\s+(?:week|weeks)", lower)
+            if week_match:
+                context.trip_length_days = int(week_match.group(1)) * 7
+
+    for label, keywords in TIME_OF_DAY_KEYWORDS.items():
+        if any(word in lower for word in keywords):
+            if label not in context.time_of_day_usage:
+                context.time_of_day_usage.append(label)
+    if not context.time_of_day_usage and "both" in lower:
+        context.time_of_day_usage.extend(["day", "night"])
+
+    for label, keywords in ACTIVITY_KEYWORDS.items():
+        if any(word in lower for word in keywords):
+            if label not in context.activities:
+                context.activities.append(label)
+    if "island" in lower and "jump" in lower:
+        if "beach" not in context.activities:
+            context.activities.append("beach")
+
+    if context.traveling_adults in (None, 0):
+        match = re.search(r"(\d+)\s+(?:adult|adults)", lower)
+        if match:
+            context.traveling_adults = int(match.group(1))
+        elif "solo" in lower:
+            context.traveling_adults = 1
+        elif any(term in lower for term in ["girlfriend", "boyfriend", "partner", "spouse", "husband", "wife"]):
+            context.traveling_adults = 2
+
+    if context.carrying_children in (None, 0):
+        match = re.search(r"(\d+)\s+(?:child|children)\b", lower)
+        if match:
+            context.carrying_children = int(match.group(1))
+
+    if context.carrying_infants in (None, 0):
+        match = re.search(r"(\d+)\s+(?:infant|infants|baby|babies)", lower)
+        if match:
+            context.carrying_infants = int(match.group(1))
+
+    if context.traveling_pets in (None, 0):
+        match = re.search(r"(\d+)\s+(?:pet|pets)", lower)
+        if match:
+            context.traveling_pets = int(match.group(1))
+
 

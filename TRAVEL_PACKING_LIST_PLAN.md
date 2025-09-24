@@ -20,7 +20,7 @@ Build an AI assistant that generates an optimized travel packing list and option
 
 ## Functional Requirements
 - **Input collection**: destination(s), dates, trip length, activities (day/night, hiking, formal, beach, business), transport (flight/airline), accommodations, personal preferences (laundry, style), constraints (capacity in L, max weight, budget), and known documents.
-  - Agent now collects these interactively in chat mode before generating advice.
+  - Agent now collects these interactively in chat mode before generating advice, and auto-extracts details (origin city, destination, start date) from natural language.
 - **Onboarding questions**: explicitly ask for backpack capacity (L), maximum comfortable carry weight (kg), airline/route, cabin class, mobility/health limitations (e.g., knee issues, need for meds), liquid constraints, and laundry availability.
   - Chat flow prompts for number of adults, children, infants, and pets, confirming each before proceeding.
 - **Weather intake**: fetch current and forecast weather (reuse `weather` MCP) for relevant dates.

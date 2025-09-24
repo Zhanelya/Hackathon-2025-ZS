@@ -8,6 +8,14 @@ def make_context():
         trip_length_days=2,
         activities=["museum"],
         time_of_day_usage=["day", "night"],
+        origin_city="Warsaw",
+        destination_country="Italy",
+        nationality="Polish",
+        start_date="2025-10-01",
+        traveling_adults=1,
+        carrying_children=0,
+        carrying_infants=0,
+        traveling_pets=0,
     )
 
 

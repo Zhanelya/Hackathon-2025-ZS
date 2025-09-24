@@ -57,6 +57,8 @@ class PackingContext:
     trip_length_days: int
     activities: List[str]
     time_of_day_usage: List[str]
+    origin_city: Optional[str] = None
+    start_date: Optional[str] = None
     capacity_liters: Optional[float] = None
     max_weight_kg: Optional[float] = None
     budget_total: Optional[float] = None
