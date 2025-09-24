@@ -13,6 +13,7 @@ from ..models.packing_models import PackingContext
 from ..packing.engine import DeepseekTravelsEngine
 from .langchain_agent import build_langchain_agent, _run_async
 from .mcp_clients import build_mock_clients
+from .safety_service import CountrySafetyService, extract_country_from_destination
 
 
 class _FixtureTool:
@@ -43,6 +44,7 @@ class PackingAssistantService:
 
     engine: DeepseekTravelsEngine
     clients: Dict[str, Any]
+    safety_service: CountrySafetyService
     history: List[str] = field(default_factory=list)
     agent_executor: Optional[Any] = None
     mcp_agent_client: Optional[Any] = None
@@ -53,6 +55,7 @@ class PackingAssistantService:
     def create(cls) -> "PackingAssistantService":
         clients = build_mock_clients()
         engine = DeepseekTravelsEngine()
+        safety_service = CountrySafetyService()
         use_llm = _should_use_llm()
         agent_executor: Optional[Any] = None
         mcp_client: Optional[Any] = clients.get("mcp_client")
@@ -65,6 +68,7 @@ class PackingAssistantService:
         return cls(
             engine=engine,
             clients=clients,
+            safety_service=safety_service,
             agent_executor=agent_executor,
             mcp_agent_client=mcp_client,
             llm_enabled=use_llm,
@@ -75,8 +79,26 @@ class PackingAssistantService:
     # ------------------------------------------------------------------
     def start_conversation(self) -> str:
         return (
-            "Hi! I’m DeepseekTravels. Describe your trip (where, when, who, activities, luggage limits, budgets) and I’ll guide you."
+            "Hi! I'm DeepseekTravels. Describe your trip (where, when, who, activities, luggage limits, budgets) and I'll guide you."
         )
+
+    def check_destination_safety(self, destination: str) -> Optional[str]:
+        """Check if destination has safety warnings and return formatted message."""
+        country = extract_country_from_destination(destination)
+        if not country:
+            return None
+
+        warning = self.safety_service.get_safety_warning(country)
+        if not warning:
+            return None
+
+        # Only show warnings for moderate risk and above
+        from .safety_service import SafetyLevel
+        if warning.level in {SafetyLevel.MODERATE_RISK, SafetyLevel.HIGH_RISK,
+                           SafetyLevel.EXTREME_RISK, SafetyLevel.TRAVEL_BANNED}:
+            return self.safety_service.format_warning_message(warning)
+
+        return None
 
     def process_conversation_turn(
         self,
@@ -85,7 +107,9 @@ class PackingAssistantService:
         callbacks: Optional[List[Any]] = None,
     ) -> str:
         if not user_input.strip():
-            return "I didn’t catch that—could you repeat?"
+            return "I didn't catch that—could you repeat?"
+
+        # The LangChain agent now handles safety checks through the safety tool
         return self.chat_once(message=user_input, context=None, callbacks=callbacks)
 
     def chat_once(
@@ -110,6 +134,10 @@ class PackingAssistantService:
         )
         weather = self._weather_tool(minimal_context.destination, callbacks=callbacks)
         requirements = self._gather_requirements(minimal_context, callbacks=callbacks)
+
+        # Add safety check in fallback mode
+        safety_warning = self.check_destination_safety(minimal_context.destination)
+
         result = self.engine.generate(minimal_context, weather)
         summary = ", ".join(f"{item.name} x{item.quantity}" for item in result.items[:5])
         reply = (
@@ -117,6 +145,10 @@ class PackingAssistantService:
             f"(Weather: {weather.get('condition')} at {weather.get('temperature_c')}°C; "
             f"Security: {'; '.join(requirements['security'])})"
         )
+
+        if safety_warning:
+            reply = safety_warning + "\n\n" + reply
+
         self.history.append(f"assistant: {reply}")
         return reply
 
@@ -126,19 +158,31 @@ class PackingAssistantService:
     def generate_packing_list(self, context: PackingContext) -> dict[str, Any]:
         weather = self._weather_tool(context.destination)
         requirements = self._gather_requirements(context)
+
+        # Check for safety warnings
+        safety_warning = self.check_destination_safety(context.destination)
+
         result = self.engine.generate(context, weather)
         return {
             "items": [item.__dict__ for item in result.items],
-            "notes": result.notes + requirements["notes"],
+            "notes": result.notes + requirements["notes"] + ([safety_warning] if safety_warning else []),
             "weather": weather,
             "requirements": requirements,
+            "safety_warning": safety_warning,
         }
 
     def describe(self, context: PackingContext) -> str:
         weather = self._weather_tool(context.destination, callbacks=None)
         requirements = self._gather_requirements(context, callbacks=None)
         result = self.engine.generate(context, weather)
+
         lines = [f"DeepseekTravels packing list for {context.destination}:"]
+
+        # Add safety warning at the top if present
+        safety_warning = self.check_destination_safety(context.destination)
+        if safety_warning:
+            lines.append("\n" + safety_warning)
+
         for item in result.items:
             lines.append(f"- {item.name} x{item.quantity} ({item.category.value})")
         lines.extend(result.notes + requirements["notes"])
@@ -149,9 +193,12 @@ class PackingAssistantService:
         return "\n".join(lines)
 
     def suggest_bookings(self, context: PackingContext) -> dict[str, Any]:
+        safety_warning = self.check_destination_safety(context.destination)
+
         booking_data = self._booking_tools(context.destination, callbacks=None)
         hold_id = f"HOLD-{context.destination.upper()}-001"
         booking_data["hold_id"] = hold_id
+        booking_data["safety_warning"] = safety_warning
         return booking_data
 
     def confirm_booking(self, hold_id: str, *, confirm: bool) -> str:
@@ -162,7 +209,14 @@ class PackingAssistantService:
     def simple_checklist(self, context: PackingContext) -> str:
         weather = self._weather_tool(context.destination, callbacks=None)
         result = self.engine.generate(context, weather)
+
         lines = [f"Quick checklist for {context.destination}:"]
+
+        # Add safety warning if present
+        safety_warning = self.check_destination_safety(context.destination)
+        if safety_warning:
+            lines.append("\n" + safety_warning)
+
         for item in result.items[:5]:
             lines.append(f"- {item.name} x{item.quantity}")
         lines.append("Pack essentials and double-check documents.")
@@ -391,5 +445,4 @@ class PackingAssistantService:
             except json.JSONDecodeError:  # pragma: no cover - defensive fallback
                 return {"raw": result}
         return result
-
 

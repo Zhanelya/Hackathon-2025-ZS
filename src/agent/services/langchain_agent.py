@@ -16,8 +16,9 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from .safety_tools import create_safety_tool
 
-PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "prompts", "system_prompt.txt")
+PROMPT_PATH = os.path.join(os.path.dirname(__file__), "..", "prompts", "comprehensive_system_prompt.txt")
 with open(PROMPT_PATH, "r", encoding="utf-8") as prompt_file:
     SYSTEM_PROMPT = prompt_file.read()
 
@@ -54,7 +55,11 @@ def build_langchain_agent() -> Tuple[AgentExecutor, MultiServerMCPClient]:
             },
         }
     )
-    tools = asyncio.run(mcp_client.get_tools())
+    mcp_tools = asyncio.run(mcp_client.get_tools())
+
+    # Add our custom safety tool
+    safety_tool = create_safety_tool()
+    tools = mcp_tools + [safety_tool]
 
     temperature_env = os.getenv("AZURE_OPENAI_TEMPERATURE")
     temperature = float(temperature_env) if temperature_env else 1.0
