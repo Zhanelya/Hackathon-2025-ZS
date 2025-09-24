@@ -11,6 +11,11 @@ import argparse
 
 from ..models.packing_models import PackingContext
 from ..services.assistant_service import PackingAssistantService
+
+USER_COLOR = "\033[32m"  # Green
+ASSISTANT_COLOR = "\033[36m"  # Cyan/pale blue
+RESET_COLOR = "\033[0m"
+
 def _build_context_from_args(args: argparse.Namespace) -> PackingContext:
     return PackingContext(
         destination=getattr(args, "destination", ""),
@@ -52,26 +57,26 @@ def main(argv: list[str] | None = None) -> int:
     ctx = _build_context_from_args(args)
 
     if args.command == "generate":
-        print(service.describe(ctx))
+        print(f"{ASSISTANT_COLOR}{service.describe(ctx)}{RESET_COLOR}")
     elif args.command == "simple":
-        print(service.simple_checklist(ctx))
+        print(f"{ASSISTANT_COLOR}{service.simple_checklist(ctx)}{RESET_COLOR}")
     elif args.command == "assist":
-        print("Entering chat mode. Type 'exit' to quit.")
         opener = service.start_conversation()
-        print(opener)
+        print(f"{ASSISTANT_COLOR}Entering chat mode. Type 'exit' to quit.{RESET_COLOR}")
+        print(f"{ASSISTANT_COLOR}{opener}{RESET_COLOR}")
         while True:
             try:
-                question = input("You: ").strip()
+                question = input(f"{USER_COLOR}You:{RESET_COLOR} ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye!")
+                print(f"\n{ASSISTANT_COLOR}Goodbye!{RESET_COLOR}")
                 break
             if not question:
                 continue
             if question.lower() in {"exit", "quit", "q"}:
-                print("Goodbye!")
+                print(f"{ASSISTANT_COLOR}Goodbye!{RESET_COLOR}")
                 break
             reply = service.process_conversation_turn(question)
-            print(reply)
+            print(f"{ASSISTANT_COLOR}{reply}{RESET_COLOR}")
     elif args.command == "book":
         booking = service.suggest_bookings(ctx)
         print("Suggested flights:")
@@ -86,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         message = service.confirm_booking(booking["hold_id"], confirm=confirmation in {"y", "yes"})
         print(message)
     else:
-        print("DeepseekTravels interactive modes coming soon. (mock mode)")
+        print(f"{ASSISTANT_COLOR}DeepseekTravels interactive modes coming soon. (mock mode){RESET_COLOR}")
     return 0
 
 
