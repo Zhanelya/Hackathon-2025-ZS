@@ -122,6 +122,7 @@ Data contracts (illustrative JSON schemas):
 ## Packing Logic and Constraints
 - **Trip length scaling**: base quantities with diminishing increments and laundry factor (e.g., shirts = ceil(tripDays/2) with laundry once).
 - **Time of day**: add night items (headlamp, reflective layer, evening wear), sun items for daytime (sunglasses, sunscreen).
+- **Short trips**: for sub-day or single-day daytime outings, skip multi-day essentials (e.g., multiple socks/underwear) unless users opt in or overnight usage is stated.
 - **Weather**: from forecast; choose layers, rain gear, insulation; heat adds hydration kit and light fabrics.
 - **Activities**: hiking → boots, socks, poles; beach → swimwear, quick-dry towel; business → formal attire.
 - **Transport**: airline baggage allowance and security rules filter/flag items; auto-replace oversized liquids with travel-size.
