@@ -53,6 +53,7 @@ async def setup_agent(system_prompt: str):
     try:
         # Load MCP tools
         mcp_client = create_mcp_client()
+        print("MCP client created, loading tools...")
         tools = await mcp_client.get_tools()
         print(f"🧰 Loaded {len(tools)} MCP tools")
         

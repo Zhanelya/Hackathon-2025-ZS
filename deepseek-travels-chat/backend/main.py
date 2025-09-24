@@ -9,6 +9,7 @@ with full LangChain integration.
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
@@ -22,6 +23,11 @@ from langchain.agents import AgentExecutor
 from contextlib import asynccontextmanager
 
 from agent import setup_agent
+
+origins = [
+    "http://localhost",
+    "http://localhost:5173",
+]
 
 load_dotenv('.env')
 
@@ -45,6 +51,14 @@ app = FastAPI(
     description="Intelligent travel packing assistant API",
     version="1.0.0",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class ChatRequest(BaseModel):
@@ -112,7 +126,7 @@ if __name__ == "__main__":
     print("🚀 Starting DeepseekTravels API Server (Simplified Mode)...")
     print("   This version provides LangChain integration with MCP servers.")
     uvicorn.run(
-        "main_simple:app",
+        "main:app",
         host="127.0.0.1",
         port=8000,
         reload=True,
