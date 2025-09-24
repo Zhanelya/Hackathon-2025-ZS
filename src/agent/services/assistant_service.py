@@ -36,14 +36,6 @@ class PackingAssistantService:
     agent_executor: Optional[Any] = None
     mcp_agent_client: Optional[Any] = None
     llm_enabled: bool = False
-    fallback_context: PackingContext = field(
-        default_factory=lambda: PackingContext(
-            destination="Unknown destination",
-            trip_length_days=3,
-            activities=["general"],
-            time_of_day_usage=["day"],
-        )
-    )
 
     @classmethod
     def create(cls) -> "PackingAssistantService":
@@ -74,25 +66,42 @@ class PackingAssistantService:
             "Hi! I’m DeepseekTravels. Describe your trip (where, when, who, activities, luggage limits, budgets) and I’ll guide you."
         )
 
-    def process_conversation_turn(self, user_input: str) -> str:
+    def process_conversation_turn(
+        self,
+        user_input: str,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> str:
         if not user_input.strip():
             return "I didn’t catch that—could you repeat?"
-        return self.chat_once(user_input, self.fallback_context)
+        return self.chat_once(message=user_input, context=None, callbacks=callbacks)
 
-    def chat_once(self, message: str, context: PackingContext) -> str:
+    def chat_once(
+        self,
+        message: str,
+        context: Optional[PackingContext] = None,
+        *,
+        callbacks: Optional[List[Any]] = None,
+    ) -> str:
         if self.llm_enabled and self.agent_executor is not None:
             payload = {"input": message}
-            result = self.agent_executor.invoke(payload)
+            result = self.agent_executor.invoke(payload, callbacks=callbacks)
             return result.get("output") or result.get("final_output") or ""
 
-        # Fallback heuristic response using rule-based engine
+        # Fallback heuristic response using rule-based engine (should rarely be used)
         self.history.append(f"user: {message}")
-        weather = self.clients["weather"].get_current(context.destination)
-        requirements = self._gather_requirements(context)
-        result = self.engine.generate(context, weather)
+        minimal_context = context or PackingContext(
+            destination="Unknown destination",
+            trip_length_days=3,
+            activities=["general"],
+            time_of_day_usage=["day"],
+        )
+        weather = self.clients["weather"].get_current(minimal_context.destination)
+        requirements = self._gather_requirements(minimal_context)
+        result = self.engine.generate(minimal_context, weather)
         summary = ", ".join(f"{item.name} x{item.quantity}" for item in result.items[:5])
         reply = (
-            f"DeepseekTravels: Based on your trip to {context.destination or 'your destination'}, consider {summary}. "
+            f"DeepseekTravels: Based on your trip to {minimal_context.destination or 'your destination'}, consider {summary}. "
             f"(Weather: {weather.get('condition')} at {weather.get('temperature_c')}°C; "
             f"Security: {'; '.join(requirements['security'])})"
         )

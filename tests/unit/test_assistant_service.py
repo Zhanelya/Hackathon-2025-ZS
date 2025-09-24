@@ -21,7 +21,7 @@ def make_context():
 
 def test_chat_once_returns_reply():
     service = PackingAssistantService.create()
-    response = service.chat_once("What should I bring?", make_context())
+    response = service.chat_once(message="What should I bring?", context=make_context(), callbacks=None)
 
     assert response
 
