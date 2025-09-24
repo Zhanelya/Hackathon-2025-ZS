@@ -28,7 +28,7 @@ class DeepseekTravelsEngine:
     rely on mocked MCP data provided via higher-level services.
     """
 
-    def generate(self, context: PackingContext) -> PackingResult:
+    def generate(self, context: PackingContext, weather: dict | None = None) -> PackingResult:
         """Produce an initial packing list for the provided context.
 
         The implementation is intentionally minimal at this stage and returns
@@ -36,12 +36,16 @@ class DeepseekTravelsEngine:
         """
 
         _ensure_valid_context(context)
-        items = build_baseline_items(context)
+        items = build_baseline_items(context, weather)
         notes = ["Baseline items generated."]
         return PackingResult(items=items, notes=notes)
 
     def adjust_for_constraints(
-        self, *, items: Iterable[PackingItem], context: PackingContext
+        self,
+        *,
+        items: Iterable[PackingItem],
+        context: PackingContext,
+        weather: dict | None = None,
     ) -> PackingResult:
         """Apply capacity/weight/priority rules to an existing list.
 

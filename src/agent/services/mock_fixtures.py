@@ -17,6 +17,13 @@ WEATHER_FIXTURES = {
         "humidity": 82,
         "wind_kmh": 14,
     },
+    "oslo": {
+        "location": "Oslo, Norway",
+        "temperature_c": 2.0,
+        "condition": "Snow showers",
+        "humidity": 88,
+        "wind_kmh": 18,
+    },
 }
 
 SECURITY_FIXTURES = {

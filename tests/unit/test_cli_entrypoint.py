@@ -18,3 +18,17 @@ def test_cli_main_prints_placeholder(capsys):
     captured = capsys.readouterr()
     assert "DeepseekTravels packing list" in captured.out
 
+
+def test_cli_assist_loop(monkeypatch, capsys):
+    inputs = iter(["What should I pack?", "exit"])
+
+    monkeypatch.setenv("DEEPSEEKTRAVELS_USE_MOCKS", "true")
+    monkeypatch.setenv("DEEPSEEKTRAVELS_OFFLINE", "true")
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+    exit_code = main(["assist", "Berlin", "3"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "DeepseekTravels" in captured.out
+

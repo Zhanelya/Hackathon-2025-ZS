@@ -29,7 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     assist = sub.add_parser("assist", help="Interactive conversation mode")
-    assist.add_argument("--offline", action="store_true", default=True)
+    assist.add_argument("destination", help="Trip destination")
+    assist.add_argument("trip_length_days", type=int)
 
     generate = sub.add_parser("generate", help="One-shot packing list")
     generate.add_argument("destination")
@@ -54,6 +55,21 @@ def main(argv: list[str] | None = None) -> int:
         print(service.describe(ctx))
     elif args.command == "simple":
         print(service.describe(ctx))
+    elif args.command == "assist":
+        print("Entering chat mode. Type 'exit' to quit.")
+        while True:
+            try:
+                question = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
+            if not question:
+                continue
+            if question.lower() in {"exit", "quit", "q"}:
+                print("Goodbye!")
+                break
+            reply = service.chat_once(question, ctx)
+            print(reply)
     else:
         print("DeepseekTravels interactive modes coming soon. (mock mode)")
     return 0
