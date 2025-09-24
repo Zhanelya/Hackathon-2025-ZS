@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "travel-requirements-mcp"
+version = "0.1.0"
+description = "MCP server for travel requirements and regulatory information"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.25.0",
+]
+
+[project.scripts]
+travel-requirements-mcp = "travel_requirements_mcp.main:main"
