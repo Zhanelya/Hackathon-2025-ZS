@@ -59,6 +59,7 @@ class CliCallbackHandler(BaseCallbackHandler):
         super().__init__()
         self.spinner = spinner
 
+    # Synchronous callbacks -------------------------------------------------
     def on_llm_start(self, *args, **kwargs) -> None:  # type: ignore[override]
         self.spinner.start()
 
@@ -69,6 +70,35 @@ class CliCallbackHandler(BaseCallbackHandler):
         self.spinner.stop()
 
     def on_tool_start(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self._log_tool_start(**kwargs)
+
+    def on_tool_end(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.start()
+
+    def on_tool_error(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.stop()
+
+    # Async callbacks -------------------------------------------------------
+    async def aon_llm_start(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.start()
+
+    async def aon_llm_end(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.stop()
+
+    async def aon_llm_error(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.stop()
+
+    async def aon_tool_start(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self._log_tool_start(**kwargs)
+
+    async def aon_tool_end(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.start()
+
+    async def aon_tool_error(self, *args, **kwargs) -> None:  # type: ignore[override]
+        self.spinner.stop()
+
+    # Internal helpers ------------------------------------------------------
+    def _log_tool_start(self, **kwargs) -> None:
         self.spinner.stop()
         name = kwargs.get("name") or kwargs.get("tool") or "tool"
         tool_input = kwargs.get("input") or kwargs.get("tool_input")
@@ -142,8 +172,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             if question.lower() in {"exit", "quit", "q"}:
                 print(f"{ASSISTANT_COLOR}Goodbye!{RESET_COLOR}")
                 break
-            reply = service.process_conversation_turn(question, callbacks=callbacks)
-            spinner.stop()
+            spinner.start()
+            try:
+                reply = service.process_conversation_turn(question, callbacks=callbacks)
+            finally:
+                spinner.stop()
             print(f"{ASSISTANT_COLOR}{reply}{RESET_COLOR}")
     elif args.command == "book":
         assert ctx is not None

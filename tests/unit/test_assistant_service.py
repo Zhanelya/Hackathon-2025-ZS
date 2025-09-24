@@ -1,3 +1,5 @@
+import pytest
+
 from src.agent.models.packing_models import PackingContext
 from src.agent.services.assistant_service import PackingAssistantService
 
@@ -19,9 +21,13 @@ def make_context():
     )
 
 
-def test_chat_once_returns_reply():
-    service = PackingAssistantService.create()
-    response = service.chat_once(message="What should I bring?", context=make_context(), callbacks=None)
+def test_chat_once_requires_llm(monkeypatch):
+    monkeypatch.setenv("DEEPSEEKTRAVELS_USE_MOCKS", "true")
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_API_VERSION", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
 
-    assert response
+    with pytest.raises(RuntimeError):
+        PackingAssistantService.create()
 

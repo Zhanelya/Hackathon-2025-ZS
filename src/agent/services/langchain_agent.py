@@ -42,18 +42,26 @@ def build_langchain_agent() -> Tuple[AgentExecutor, MultiServerMCPClient]:
     if missing:
         raise RuntimeError(f"Missing required Azure OpenAI env vars: {', '.join(missing)}")
 
-    mcp_client = MultiServerMCPClient(
-        {
-            "attractions": {
-                "transport": "streamable_http",
-                "url": os.getenv("ATTRACTIONS_MCP_URL"),
-            },
-            "weather": {
-                "transport": "streamable_http",
-                "url": os.getenv("WEATHER_MCP_URL"),
-            },
-        }
-    )
+    mcp_config: dict[str, dict[str, str]] = {
+        "attractions": {
+            "transport": "streamable_http",
+            "url": os.getenv("ATTRACTIONS_MCP_URL", "http://localhost:8008"),
+        },
+        "weather": {
+            "transport": "streamable_http",
+            "url": os.getenv("WEATHER_MCP_URL", "http://localhost:8009"),
+        },
+        "requirements": {
+            "transport": "streamable_http",
+            "url": os.getenv("REQUIREMENTS_MCP_URL", "http://localhost:8010"),
+        },
+        "booking": {
+            "transport": "streamable_http",
+            "url": os.getenv("BOOKING_MCP_URL", "http://localhost:8011"),
+        },
+    }
+
+    mcp_client = MultiServerMCPClient(mcp_config)
     tools = asyncio.run(mcp_client.get_tools())
 
     temperature_env = os.getenv("AZURE_OPENAI_TEMPERATURE")

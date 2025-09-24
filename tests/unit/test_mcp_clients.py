@@ -10,16 +10,11 @@ def test_build_mock_clients_returns_expected(monkeypatch):
 
     clients = mcp_clients.build_mock_clients()
 
-    assert "weather" in clients
-    assert isinstance(clients["weather"], mcp_clients.WeatherClient)
-    weather = clients["weather"].get_current("Paris")
-    assert weather["location"].startswith("Paris")
-
-    requirements = clients["requirements"].get_visa_requirements("PL", "FR")
-    assert requirements["visa_required"] is False
-
-    budgeting = clients["budgeting"].get_defaults()
-    assert "laundry_per_load" in budgeting
+    assert "mcp_client" in clients
+    # Ensure the MCP client has entries for each expected server
+    config = clients["mcp_config"]
+    for server in ("attractions", "weather", "requirements", "booking"):
+        assert server in config
 
 
 def test_build_mock_clients_requires_mock(monkeypatch):

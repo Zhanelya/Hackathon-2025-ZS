@@ -5,23 +5,13 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import warnings
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Awaitable
+from typing import Any, Dict, List, Optional
 
 from ..models.packing_models import PackingContext
 from ..packing.engine import DeepseekTravelsEngine
 from .langchain_agent import build_langchain_agent, _run_async
 from .mcp_clients import build_mock_clients
-
-
-class _FixtureTool:
-    def __init__(self, name: str, handler):
-        self.name = name
-        self._handler = handler
-
-    def invoke(self, params):
-        return self._handler(params)
 
 
 def _should_use_llm() -> bool:
@@ -34,6 +24,7 @@ def _should_use_llm() -> bool:
         "AZURE_OPENAI_API_VERSION",
         "AZURE_OPENAI_DEPLOYMENT",
     ]
+    
     return all(os.getenv(key) for key in required_env)
 
 
@@ -60,8 +51,8 @@ class PackingAssistantService:
             try:
                 agent_executor, mcp_client = build_langchain_agent()
             except Exception as exc:  # pragma: no cover - integration guard
-                warnings.warn(f"Falling back to mock engine due to LLM init error: {exc}")
-                use_llm = False
+                print(f"[MCP ERROR] Failed to initialise LangChain agent: {exc}")
+                raise
         return cls(
             engine=engine,
             clients=clients,
@@ -185,60 +176,24 @@ class PackingAssistantService:
         if cache_key in self._tool_cache:
             return self._tool_cache[cache_key]
 
-        if self.mcp_agent_client is not None:
-            async def _fetch_tool() -> Any:
-                tools = await self.mcp_agent_client.get_tools(server_name=server)
-                for tool in tools:
-                    if tool.name == tool_name:
-                        return tool
-                raise ValueError(f"Tool {tool_name} not found on server {server}")
+        if self.mcp_agent_client is None:
+            raise RuntimeError("MCP client not initialised; cannot load tools.")
 
-            try:
-                tool = _run_async(_fetch_tool())
-            except Exception as exc:  # pragma: no cover - fallback path
-                warnings.warn(f"Falling back to fixture tool for {server}.{tool_name}: {exc}")
-                tool = self._fixture_tool(server, tool_name)
-        else:
-            tool = self._fixture_tool(server, tool_name)
+        async def _fetch_tool() -> Any:
+            tools = await self.mcp_agent_client.get_tools(server_name=server)
+            for tool in tools:
+                if tool.name == tool_name:
+                    return tool
+            raise ValueError(f"Tool {tool_name} not found on server {server}")
+
+        try:
+            tool = _run_async(_fetch_tool())
+        except Exception as exc:
+            print(f"[MCP ERROR] Unable to load tool {server}.{tool_name}: {exc}")
+            raise
 
         self._tool_cache[cache_key] = tool
         return tool
-
-    def _fixture_tool(self, server: str, tool_name: str) -> Any:
-        from . import mock_fixtures
-
-        if server == "weather" and tool_name == "get_current_weather":
-            return _FixtureTool(
-                tool_name,
-                lambda params: mock_fixtures.WEATHER_FIXTURES.get(
-                    (params.get("location") or "").lower(), mock_fixtures.WEATHER_FIXTURES["default"]
-                ),
-            )
-        if server == "requirements" and tool_name == "get_airport_security_rules":
-            return _FixtureTool(tool_name, lambda _params: mock_fixtures.SECURITY_FIXTURES["default"])
-        if server == "requirements" and tool_name == "get_visa_requirements":
-            return _FixtureTool(
-                tool_name,
-                lambda params: mock_fixtures.VISA_FIXTURES.get(
-                    f"{(params.get('nationality') or '').lower()}-{(params.get('destination_country') or '').lower()}",
-                    mock_fixtures.VISA_FIXTURES["default"],
-                ),
-            )
-        if server == "booking" and tool_name in {"search_flights", "search_hotels", "search_activities"}:
-            fixtures = mock_fixtures.BOOKING_FIXTURES
-
-            def _handler(params):
-                destination = (params.get("destination") or "").lower()
-                data = fixtures.get(destination, fixtures["default"])
-                if tool_name == "search_flights":
-                    return {**params, "flights": data.get("flights", [])}
-                if tool_name == "search_hotels":
-                    return {**params, "hotels": data.get("hotels", [])}
-                return {**params, "activities": data.get("activities", [])}
-
-            return _FixtureTool(tool_name, _handler)
-
-        raise ValueError(f"No fixture tool available for {server}.{tool_name}")
 
     def _requirements_tools(
         self,
@@ -247,14 +202,7 @@ class PackingAssistantService:
         callbacks: Optional[List[Any]] = None,
     ) -> dict[str, Any]:
         if self.mcp_agent_client is None:
-            from .mock_fixtures import SECURITY_FIXTURES, VISA_FIXTURES
-
-            security = SECURITY_FIXTURES["default"]
-            visa = {}
-            if context.nationality and context.destination_country:
-                key = f"{context.nationality.lower()}-{context.destination_country.lower()}"
-                visa = VISA_FIXTURES.get(key, VISA_FIXTURES["default"])
-            return {"security": security, "visa": visa}
+            raise RuntimeError("MCP client not initialised; cannot retrieve requirements data.")
         requirements = {}
         security_tool = self._get_tool("requirements", "get_airport_security_rules")
         security = self._invoke_tool(
@@ -289,14 +237,7 @@ class PackingAssistantService:
         callbacks: Optional[List[Any]] = None,
     ) -> dict[str, Any]:
         if self.mcp_agent_client is None:
-            from .mock_fixtures import BOOKING_FIXTURES
-
-            data = BOOKING_FIXTURES.get(destination.lower(), BOOKING_FIXTURES["default"])
-            return {
-                "flights": data.get("flights", []),
-                "hotels": data.get("hotels", []),
-                "activities": data.get("activities", []),
-            }
+            raise RuntimeError("MCP client not initialised; cannot retrieve booking data.")
         flights_tool = self._get_tool("booking", "search_flights")
         flights = self._invoke_tool(
             flights_tool,
@@ -377,14 +318,17 @@ class PackingAssistantService:
         *,
         callbacks: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
-        if isinstance(tool, _FixtureTool):
-            return tool.invoke(params)
-        if hasattr(tool, "ainvoke"):
-            result = _run_async(tool.ainvoke(params, callbacks=callbacks))
-        else:
-            result = tool.invoke(params, callbacks=callbacks)
-            if inspect.isawaitable(result):
-                result = _run_async(result)
+        try:
+            if hasattr(tool, "ainvoke"):
+                result = _run_async(tool.ainvoke(params, callbacks=callbacks))
+            else:
+                result = tool.invoke(params, callbacks=callbacks)
+                if inspect.isawaitable(result):
+                    result = _run_async(result)
+        except Exception as exc:
+            tool_name = getattr(tool, "name", repr(tool))
+            print(f"[MCP ERROR] Tool invocation failed for {tool_name}: {exc}")
+            raise
         if isinstance(result, str):
             try:
                 return json.loads(result)
