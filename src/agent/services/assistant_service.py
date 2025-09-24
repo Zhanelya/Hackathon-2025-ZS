@@ -153,11 +153,6 @@ class PackingAssistantService:
         except RuntimeError as exc:
             return self._format_tool_error(str(exc))
 
-        # Add safety check in fallback mode only after required details exist
-        safety_warning = None
-        if minimal_context.destination not in {"", "Unknown destination"}:
-            safety_warning = self.check_destination_safety(minimal_context.destination)
-
         result = self.engine.generate(minimal_context, weather)
         summary = ", ".join(f"{item.name} x{item.quantity}" for item in result.items[:5])
         reply = (
@@ -165,9 +160,6 @@ class PackingAssistantService:
             f"(Weather: {weather.get('condition')} at {weather.get('temperature_c')}°C; "
             f"Security: {'; '.join(requirements['security'])})"
         )
-
-        if safety_warning:
-            reply = safety_warning + "\n\n" + reply
 
         self.history.append(f"assistant: {reply}")
         return reply
@@ -179,16 +171,12 @@ class PackingAssistantService:
         weather = self._weather_tool(context.destination)
         requirements = self._gather_requirements(context)
 
-        # Check for safety warnings
-        safety_warning = self.check_destination_safety(context.destination)
-
         result = self.engine.generate(context, weather)
         return {
             "items": [item.__dict__ for item in result.items],
-            "notes": result.notes + requirements["notes"] + ([safety_warning] if safety_warning else []),
+            "notes": result.notes + requirements["notes"],
             "weather": weather,
             "requirements": requirements,
-            "safety_warning": safety_warning,
         }
 
     def describe(self, context: PackingContext) -> str:
@@ -197,11 +185,6 @@ class PackingAssistantService:
         result = self.engine.generate(context, weather)
 
         lines = [f"DeepseekTravels packing list for {context.destination}:"]
-
-        # Add safety warning at the top if present
-        safety_warning = self.check_destination_safety(context.destination)
-        if safety_warning:
-            lines.append("\n" + safety_warning)
 
         for item in result.items:
             lines.append(f"- {item.name} x{item.quantity} ({item.category.value})")
@@ -213,12 +196,9 @@ class PackingAssistantService:
         return "\n".join(lines)
 
     def suggest_bookings(self, context: PackingContext) -> dict[str, Any]:
-        safety_warning = self.check_destination_safety(context.destination)
-
         booking_data = self._booking_tools(context.destination, callbacks=None)
         hold_id = f"HOLD-{context.destination.upper()}-001"
         booking_data["hold_id"] = hold_id
-        booking_data["safety_warning"] = safety_warning
         return booking_data
 
     def confirm_booking(self, hold_id: str, *, confirm: bool) -> str:
@@ -231,11 +211,6 @@ class PackingAssistantService:
         result = self.engine.generate(context, weather)
 
         lines = [f"Quick checklist for {context.destination}:"]
-
-        # Add safety warning if present
-        safety_warning = self.check_destination_safety(context.destination)
-        if safety_warning:
-            lines.append("\n" + safety_warning)
 
         for item in result.items[:5]:
             lines.append(f"- {item.name} x{item.quantity}")
